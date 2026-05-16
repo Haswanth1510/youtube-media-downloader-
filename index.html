@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>get. — media downloader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&family=DM+Serif+Display:ital@0;1&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+
+<nav>
+  <div class="logo">get.</div>
+  <div class="nav-center">
+    <span class="nav-link">Instagram</span>
+    <span class="nav-link">YouTube</span>
+    <span class="nav-link">How it works</span>
+  </div>
+  <div class="nav-tag">media downloader</div>
+</nav>
+
+<div class="shell">
+
+  <!-- LEFT: Hero + platform list -->
+  <aside class="left">
+    <div class="left-top">
+      <p class="eyebrow">v2.0 — free forever</p>
+      <h1>Download<br><em>anything.</em></h1>
+      <p class="hero-sub">
+        Save Instagram posts, stories, and YouTube videos straight to your device — no account, no watermarks, no limits.
+      </p>
+    </div>
+
+    <div class="platforms">
+      <div class="plat-row">
+        <span class="plat-num">01</span>
+        <span class="plat-name">Instagram Post</span>
+        <span class="plat-tag">MP4 · JPEG</span>
+      </div>
+      <div class="plat-row">
+        <span class="plat-num">02</span>
+        <span class="plat-name">Instagram Story</span>
+        <span class="plat-tag">MP4 · 15s</span>
+      </div>
+      <div class="plat-row">
+        <span class="plat-num">03</span>
+        <span class="plat-name">YouTube Video</span>
+        <span class="plat-tag">1080p · 720p</span>
+      </div>
+      <div class="plat-row">
+        <span class="plat-num">04</span>
+        <span class="plat-name">YouTube Audio</span>
+        <span class="plat-tag">MP3</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- RIGHT: Form + result -->
+  <section class="right">
+
+    <div class="tabs" role="tablist">
+      <button class="tab-btn active" data-tab="ig-post"  role="tab">Instagram Post</button>
+      <button class="tab-btn"        data-tab="ig-story" role="tab">Instagram Story</button>
+      <button class="tab-btn"        data-tab="youtube"  role="tab">YouTube</button>
+    </div>
+
+    <div class="field-group">
+      <label class="field-label" for="urlInput">URL</label>
+      <div class="input-wrap">
+        <input class="url-input" id="urlInput" type="url"
+          placeholder="Paste a link here..."
+          autocomplete="off" spellcheck="false"/>
+        <button class="paste-btn" id="pasteBtn">Paste</button>
+      </div>
+    </div>
+
+    <div class="quality-wrap" id="qualityWrap">
+      <label class="field-label" for="qualitySelect">Quality</label>
+      <select class="quality-select" id="qualitySelect">
+        <option value="1080p">1080p — Full HD</option>
+        <option value="720p">720p — HD</option>
+        <option value="480p">480p — Standard</option>
+        <option value="best">Best Quality — Auto</option>
+        <option value="mp3">MP3 — Audio only</option>
+      </select>
+    </div>
+
+    <button class="dl-btn" id="dlBtn">
+      <div class="dl-spin"></div>
+      <span class="dl-label">Download</span>
+    </button>
+
+    <p class="err" id="errBox"></p>
+
+    <div class="result" id="resultCard">
+      <p class="result-label">Ready to save</p>
+      <div class="result-thumb-wrap">
+        <img class="result-thumb" id="rThumb" src="" alt=""/>
+      </div>
+      <div class="result-meta">
+        <p class="result-title" id="rTitle">—</p>
+        <span class="result-chip" id="rChip">MP4</span>
+      </div>
+      <div class="result-details">
+        <div class="detail">
+          <span class="detail-lbl">Platform</span>
+          <span class="detail-val" id="rPlatform">—</span>
+        </div>
+        <div class="detail">
+          <span class="detail-lbl">Size</span>
+          <span class="detail-val" id="rSize">—</span>
+        </div>
+        <div class="detail">
+          <span class="detail-lbl">Duration</span>
+          <span class="detail-val" id="rDur">—</span>
+        </div>
+      </div>
+      <button class="save-btn" id="saveBtn">Save to device</button>
+    </div>
+
+  </section>
+</div>
+
+<footer>
+  <p class="disc">⚠ For personal use only. Not for commercial use. Do not use for harassment or unauthorized distribution.</p>
+  <p class="foot-r">© 2025 get.</p>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>
