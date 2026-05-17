@@ -320,10 +320,11 @@ def _sync_fetch_info(url: str) -> dict:
             return {
                 "title": data.get("title", "YouTube Video"),
                 "thumbnail": thumb,
-                "duration": duration,
-                "filesize": None,
-                "ext": "mp4",
+                "duration": duration or "N/A",
                 "platform": "YouTube",
+                "extractor": "youtube",
+                "filesize": "N/A",
+                "ext": "MP4",
             }
         except Exception as e:
             logger.error("RapidAPI Info Fetch Failed, trying yt-dlp fallback: %s", e)
