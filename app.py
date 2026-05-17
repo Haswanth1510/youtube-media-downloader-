@@ -1,4 +1,5 @@
 import os
+import base64
 import uuid
 import glob
 import asyncio
@@ -32,14 +33,23 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 _ENV_COOKIE_PATH = os.path.join(TEMP_DIR, "_env_cookies.txt")
 
 def _write_env_cookies() -> str | None:
-    """If COOKIES_CONTENT env var is set, write it to a temp file and return the path."""
-    content = os.environ.get("COOKIES_CONTENT", "").strip()
-    if content:
-        with open(_ENV_COOKIE_PATH, "w", encoding="utf-8") as f:
-            f.write(content)
-        logging.getLogger(__name__).info("Loaded cookies from COOKIES_CONTENT env var.")
-        return _ENV_COOKIE_PATH
-    return None
+    """If COOKIES_CONTENT env var is set, write it to a temp file and return the path.
+    Supports both raw Netscape cookie text and base64-encoded content.
+    Base64 is preferred because Render's env var UI can corrupt tab characters.
+    """
+    raw = os.environ.get("COOKIES_CONTENT", "").strip()
+    if not raw:
+        return None
+    # Try base64 decode first; fall back to raw text
+    try:
+        content = base64.b64decode(raw).decode("utf-8")
+        logging.getLogger(__name__).info("Loaded cookies from COOKIES_CONTENT env var (base64).")
+    except Exception:
+        content = raw
+        logging.getLogger(__name__).info("Loaded cookies from COOKIES_CONTENT env var (raw text).")
+    with open(_ENV_COOKIE_PATH, "w", encoding="utf-8") as f:
+        f.write(content)
+    return _ENV_COOKIE_PATH
 
 def _find_cookie_file() -> str | None:
     """Find a cookies.txt file — env var takes priority over local files."""
