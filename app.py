@@ -223,10 +223,15 @@ def _friendly_error(exc: Exception) -> str:
     low = msg.lower()
 
     if any(k in low for k in ("login", "log in", "sign in", "authentication", "not logged")):
+        if "youtube" in low or "bot" in low or "confirm you're not a bot" in low:
+            return (
+                "YouTube requires you to sign in to confirm you're not a bot. "
+                "Update your cookies.txt with a fresh YouTube session, or ensure "
+                "your proxy is working correctly."
+            )
         return (
-            "Instagram login required. Export your cookies using the "
-            "'Get cookies.txt LOCALLY' Chrome extension while logged into "
-            "Instagram, then save the file as cookies.txt in the app folder."
+            "Login required. Export your cookies using the 'Get cookies.txt LOCALLY' "
+            "Chrome extension while logged into the platform, then update the app."
         )
     if "empty media response" in low:
         return (
