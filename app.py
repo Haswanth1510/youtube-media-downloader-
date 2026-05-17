@@ -294,10 +294,10 @@ def _sync_fetch_info(url: str) -> dict:
                 raise Exception("Could not parse YouTube video ID from URL")
             yt_id = yt_id_match.group(1)
 
-            api_url = "https://youtube-video-download-info.p.rapidapi.com/dl"
+            api_url = "https://ytstream-download-youtube-videos.p.rapidapi.com/dl"
             headers = {
                 "x-rapidapi-key": rapidapi_key,
-                "x-rapidapi-host": "youtube-video-download-info.p.rapidapi.com"
+                "x-rapidapi-host": "ytstream-download-youtube-videos.p.rapidapi.com"
             }
             logger.info("Fetching YouTube info from RapidAPI for ID: %s", yt_id)
             res = requests.get(api_url, headers=headers, params={"id": yt_id}, timeout=15)
@@ -407,10 +407,10 @@ def _sync_download(url: str, task_id: str) -> None:
             _progress_store[task_id]["status"] = "downloading"
             _progress_store[task_id]["percent"] = 5.0
 
-            api_url = "https://youtube-video-download-info.p.rapidapi.com/dl"
+            api_url = "https://ytstream-download-youtube-videos.p.rapidapi.com/dl"
             headers = {
                 "x-rapidapi-key": rapidapi_key,
-                "x-rapidapi-host": "youtube-video-download-info.p.rapidapi.com"
+                "x-rapidapi-host": "ytstream-download-youtube-videos.p.rapidapi.com"
             }
             logger.info("Requesting YouTube download from RapidAPI for ID: %s", yt_id)
             res = requests.get(api_url, headers=headers, params={"id": yt_id}, timeout=15)
