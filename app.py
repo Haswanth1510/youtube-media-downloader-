@@ -23,11 +23,29 @@ else:
 TEMP_DIR    = os.path.join(BASE_DIR, "downloads")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Path to a cookies.txt file exported from your browser (recommended).
-# Export using the 'Get cookies.txt LOCALLY' browser extension.
-# Set to None to fall back to browser-based cookie extraction.
+# ── Cookie file resolution ────────────────────────────────────────────────────
+# Priority order:
+#   1. COOKIES_CONTENT env var  → written to a temp file (for Render / cloud)
+#   2. Local cookies.txt file   → used as-is (for local dev)
+#   3. Browser cookies          → fallback (local dev only)
+
+_ENV_COOKIE_PATH = os.path.join(TEMP_DIR, "_env_cookies.txt")
+
+def _write_env_cookies() -> str | None:
+    """If COOKIES_CONTENT env var is set, write it to a temp file and return the path."""
+    content = os.environ.get("COOKIES_CONTENT", "").strip()
+    if content:
+        with open(_ENV_COOKIE_PATH, "w", encoding="utf-8") as f:
+            f.write(content)
+        logging.getLogger(__name__).info("Loaded cookies from COOKIES_CONTENT env var.")
+        return _ENV_COOKIE_PATH
+    return None
+
 def _find_cookie_file() -> str | None:
-    # Prioritize specific site cookies, then the generic one, then any file ending in cookies.txt
+    """Find a cookies.txt file — env var takes priority over local files."""
+    env_path = _write_env_cookies()
+    if env_path:
+        return env_path
     for name in ["www.instagram.com_cookies.txt", "instagram.com_cookies.txt", "cookies.txt"]:
         p = os.path.join(BASE_DIR, name)
         if os.path.exists(p): return p
@@ -36,10 +54,9 @@ def _find_cookie_file() -> str | None:
 
 COOKIE_FILE: str | None = _find_cookie_file()
 
-# Fallback browser for cookies if cookies.txt doesn't exist.
-# Use 'firefox' (recommended) — Firefox doesn't lock its DB while running.
-# Chrome will fail if Chrome is open. Set to None to disable.
-COOKIE_BROWSER: str | None = "firefox"
+# Fallback browser for cookies if no cookie file is found.
+# Only useful locally — disabled on Render (no browser installed).
+COOKIE_BROWSER: str | None = None if os.environ.get("RENDER") else "firefox"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO)
