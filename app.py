@@ -195,10 +195,13 @@ def _build_ydl_opts(url: str = "") -> dict:
 
     # IMPORTANT: YouTube blocks accounts if the IP changes drastically (e.g., India -> LA proxy).
     # Furthermore, Webshare's datacenter IPs are hard-banned by YouTube.
-    # We only apply the cookies AND the proxy if the domain is NOT YouTube.
+    # We skip cookies and proxies for YouTube ONLY when running on Render's cloud servers.
+    # When running locally, we want to use your home cookies!
     is_youtube = "youtube.com" in url.lower() or "youtu.be" in url.lower()
+    is_render = os.environ.get("RENDER") == "true"
+    skip_auth = is_youtube and is_render
     
-    if not is_youtube:
+    if not skip_auth:
         if COOKIE_FILE and os.path.exists(COOKIE_FILE):
             opts["cookiefile"] = COOKIE_FILE
         elif COOKIE_BROWSER:
