@@ -31,3 +31,5 @@ Thumbs.db
 # Browser cookies — sensitive, never commit
 cookies.txt
 *.cookies.txt
+cookies-*.txt
+cookies_b64.txt
