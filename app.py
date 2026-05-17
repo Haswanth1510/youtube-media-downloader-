@@ -36,6 +36,7 @@ def _write_env_cookies() -> str | None:
     """If COOKIES_CONTENT env var is set, write it to a temp file and return the path.
     Supports both raw Netscape cookie text and base64-encoded content.
     Base64 is preferred because Render's env var UI can corrupt tab characters.
+    Always writes with Unix LF line endings — yt-dlp on Linux rejects CRLF files.
     """
     raw = os.environ.get("COOKIES_CONTENT", "").strip()
     if not raw:
@@ -47,8 +48,12 @@ def _write_env_cookies() -> str | None:
     except Exception:
         content = raw
         logging.getLogger(__name__).info("Loaded cookies from COOKIES_CONTENT env var (raw text).")
-    with open(_ENV_COOKIE_PATH, "w", encoding="utf-8") as f:
-        f.write(content)
+    # Normalize to Unix LF — yt-dlp on Linux fails to parse CRLF cookie files
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    # Write in binary mode to prevent Python adding OS-specific newlines on Windows
+    with open(_ENV_COOKIE_PATH, "wb") as f:
+        f.write(content.encode("utf-8"))
+    logging.getLogger(__name__).info("Cookie file written: %s (%d bytes)", _ENV_COOKIE_PATH, len(content))
     return _ENV_COOKIE_PATH
 
 def _find_cookie_file() -> str | None:
