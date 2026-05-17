@@ -3,3 +3,4 @@ uvicorn>=0.23.2
 yt-dlp>=2026.03.17
 instaloader>=4.10.1
 pydantic>=2.4.2
+requests>=2.31.0
