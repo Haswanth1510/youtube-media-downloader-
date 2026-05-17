@@ -279,6 +279,45 @@ def _sync_fetch_info(url: str) -> dict:
     Blocking: fetch video metadata without downloading.
     Always call via asyncio.to_thread() — never directly from async code.
     """
+    is_youtube = "youtube.com" in url.lower() or "youtu.be" in url.lower()
+    rapidapi_key = os.environ.get("RAPIDAPI_KEY", "").strip()
+
+    if is_youtube and rapidapi_key:
+        import re
+        import requests
+        try:
+            yt_id_match = re.search(
+                r'(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})',
+                url
+            )
+            if not yt_id_match:
+                raise Exception("Could not parse YouTube video ID from URL")
+            yt_id = yt_id_match.group(1)
+
+            api_url = "https://youtube-video-download-info.p.rapidapi.com/dl"
+            headers = {
+                "x-rapidapi-key": rapidapi_key,
+                "x-rapidapi-host": "youtube-video-download-info.p.rapidapi.com"
+            }
+            logger.info("Fetching YouTube info from RapidAPI for ID: %s", yt_id)
+            res = requests.get(api_url, headers=headers, params={"id": yt_id}, timeout=15)
+            res.raise_for_status()
+            data = res.json()
+
+            if data.get("status") != "ok" and "title" not in data:
+                raise Exception(data.get("msg", "Failed to retrieve details from API"))
+
+            return {
+                "title": data.get("title", "YouTube Video"),
+                "thumbnail": data.get("thumb", ""),
+                "duration": data.get("length", ""),
+                "filesize": None,
+                "ext": "mp4",
+                "platform": "YouTube",
+            }
+        except Exception as e:
+            logger.error("RapidAPI Info Fetch Failed, trying yt-dlp fallback: %s", e)
+
     # Info-only fetch — use lightweight opts (no format/merge keys)
     with yt_dlp.YoutubeDL(_build_info_opts(url)) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -350,6 +389,86 @@ def _sync_download(url: str, task_id: str) -> None:
     Blocking: download media to TEMP_DIR using the given task_id as prefix.
     Always call via asyncio.to_thread() — never directly from async code.
     """
+    is_youtube = "youtube.com" in url.lower() or "youtu.be" in url.lower()
+    rapidapi_key = os.environ.get("RAPIDAPI_KEY", "").strip()
+
+    if is_youtube and rapidapi_key:
+        import re
+        import requests
+        try:
+            yt_id_match = re.search(
+                r'(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})',
+                url
+            )
+            if not yt_id_match:
+                raise Exception("Could not parse YouTube video ID from URL")
+            yt_id = yt_id_match.group(1)
+
+            _progress_store[task_id]["status"] = "downloading"
+            _progress_store[task_id]["percent"] = 5.0
+
+            api_url = "https://youtube-video-download-info.p.rapidapi.com/dl"
+            headers = {
+                "x-rapidapi-key": rapidapi_key,
+                "x-rapidapi-host": "youtube-video-download-info.p.rapidapi.com"
+            }
+            logger.info("Requesting YouTube download from RapidAPI for ID: %s", yt_id)
+            res = requests.get(api_url, headers=headers, params={"id": yt_id}, timeout=15)
+            res.raise_for_status()
+            data = res.json()
+
+            if data.get("status") != "ok" and "link" not in data:
+                raise Exception(data.get("msg", "Failed to retrieve download link from API"))
+
+            links = data.get("link", {})
+            best_url = None
+            
+            # The YouTube Download API format has a 'link' dict mapping quality strings to URLs
+            # Try to grab the best available MP4 format (e.g. 720p or 360p)
+            for q in ["720p", "360p", "1080p", "480p", "240p", "144p"]:
+                if q in links:
+                    best_url = links[q]
+                    # Sometimes it might be a list or a string. Standard is string.
+                    if isinstance(best_url, list) and len(best_url) > 0:
+                        best_url = best_url[0]
+                    if best_url:
+                        break
+
+            if not best_url:
+                raise Exception("Could not find a valid MP4 download link in the API response")
+
+            title = data.get("title", f"YouTube_{yt_id}")
+            safe_title = re.sub(r'[\/\\:*?"<>|]', '', title).strip() or f"YouTube_{yt_id}"
+            final_filename = f"{safe_title}.mp4"
+            actual_path = os.path.join(TEMP_DIR, f"{task_id}.mp4")
+
+            logger.info("RapidAPI matched stream URL: %s. Downloading to: %s", best_url[:50], actual_path)
+            
+            # Stream the file down and update our progress percentage
+            dl_res = requests.get(best_url, stream=True, timeout=30)
+            dl_res.raise_for_status()
+            total_size = int(dl_res.headers.get('content-length', 0))
+
+            downloaded = 0
+            with open(actual_path, "wb") as f:
+                for chunk in dl_res.iter_content(chunk_size=65536):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size > 0:
+                            percent = (downloaded / total_size) * 100
+                            # Throttle updates slightly to not block the thread
+                            _progress_store[task_id]["percent"] = round(percent, 1)
+
+            _progress_store[task_id]["status"] = "finished"
+            _progress_store[task_id]["percent"] = 100.0
+            _progress_store[task_id]["download_name"] = final_filename
+            _progress_store[task_id]["actual_path"] = actual_path
+            logger.info("RapidAPI YouTube download finished successfully!")
+            return
+        except Exception as e:
+            logger.error("RapidAPI download failed: %s. Falling back to yt-dlp.", e)
+
     try:
         opts = _build_ydl_opts(url)
 
