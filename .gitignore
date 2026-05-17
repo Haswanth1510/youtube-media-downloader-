@@ -33,3 +33,8 @@ cookies.txt
 *.cookies.txt
 cookies-*.txt
 cookies_b64.txt
+cookies youtube.txt
+cookies_clean.txt
+*cookie*
+tunnel_url.txt
+
