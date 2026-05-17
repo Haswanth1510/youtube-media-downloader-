@@ -390,6 +390,45 @@ def _cleanup_file(filepath: str) -> None:
 
 # ── API endpoints ─────────────────────────────────────────────────────────────
 
+@app.get("/api/cookie-status")
+async def cookie_status():
+    """Debug endpoint: shows exactly what cookie source the server is using."""
+    env_raw = os.environ.get("COOKIES_CONTENT", "")
+    env_set = bool(env_raw.strip())
+    env_len = len(env_raw.strip())
+
+    # Try base64 decode
+    b64_ok = False
+    if env_set:
+        try:
+            base64.b64decode(env_raw.strip()).decode("utf-8")
+            b64_ok = True
+        except Exception:
+            pass
+
+    cookie_file_exists = COOKIE_FILE is not None and os.path.exists(COOKIE_FILE)
+    cookie_file_lines = 0
+    has_sessionid = False
+    if cookie_file_exists:
+        try:
+            lines = open(COOKIE_FILE, encoding="utf-8").readlines()
+            cookie_file_lines = len([l for l in lines if l.strip() and not l.startswith("#")])
+            has_sessionid = any("sessionid" in l for l in lines)
+        except Exception:
+            pass
+
+    return JSONResponse({
+        "COOKIES_CONTENT_env_set": env_set,
+        "COOKIES_CONTENT_length": env_len,
+        "COOKIES_CONTENT_is_base64": b64_ok,
+        "COOKIE_FILE_path": COOKIE_FILE,
+        "COOKIE_FILE_exists": cookie_file_exists,
+        "COOKIE_FILE_data_lines": cookie_file_lines,
+        "has_instagram_sessionid": has_sessionid,
+        "COOKIE_BROWSER_fallback": COOKIE_BROWSER,
+    })
+
+
 @app.post("/api/info")
 async def get_info(req: InfoRequest, request: Request):
     """
