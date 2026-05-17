@@ -1,0 +1,18 @@
+# Virtual environments
+venv/
+env/
+__pycache__/
+
+# Local binaries (Docker will install its own ffmpeg)
+ffmpeg.exe
+ffmpeg.zip
+*.mp4
+*.mp3
+
+# IDE / System
+.vscode/
+.idea/
+.DS_Store
+
+# Do NOT commit cookies.txt to github, but docker builds might use it locally
+# Render deployment won't have it unless you mount a secret

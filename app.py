@@ -16,7 +16,10 @@ import yt_dlp
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
-FFMPEG_PATH = os.path.join(BASE_DIR, "ffmpeg.exe")
+if os.name == 'nt':  # Windows
+    FFMPEG_PATH = os.path.join(BASE_DIR, "ffmpeg.exe")
+else:
+    FFMPEG_PATH = "ffmpeg"  # Linux / Render (assumes installed in PATH)
 TEMP_DIR    = os.path.join(BASE_DIR, "downloads")
 os.makedirs(TEMP_DIR, exist_ok=True)
 

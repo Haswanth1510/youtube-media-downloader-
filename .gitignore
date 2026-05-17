@@ -20,6 +20,9 @@ ffprobe.exe
 # OS files
 .DS_Store
 Thumbs.db
+*.mp4
+*.zip
+
 
 # IDE
 .vscode/
