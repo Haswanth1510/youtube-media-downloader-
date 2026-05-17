@@ -194,8 +194,8 @@ def _build_ydl_opts(url: str = "") -> dict:
     }
 
     # IMPORTANT: YouTube blocks accounts if the IP changes drastically (e.g., India -> LA proxy).
-    # For YouTube, it's safer to download anonymously for public videos.
-    # We only apply the cookies if the domain is NOT YouTube.
+    # Furthermore, Webshare's datacenter IPs are hard-banned by YouTube.
+    # We only apply the cookies AND the proxy if the domain is NOT YouTube.
     is_youtube = "youtube.com" in url.lower() or "youtu.be" in url.lower()
     
     if not is_youtube:
@@ -204,10 +204,10 @@ def _build_ydl_opts(url: str = "") -> dict:
         elif COOKIE_BROWSER:
             opts["cookiesfrombrowser"] = (COOKIE_BROWSER,)
         
-    # Check if a PROXY_URL environment variable is set (used to bypass IP blocking)
-    proxy_url = os.environ.get("PROXY_URL", "").strip()
-    if proxy_url:
-        opts["proxy"] = proxy_url
+        # Check if a PROXY_URL environment variable is set (used to bypass IP blocking)
+        proxy_url = os.environ.get("PROXY_URL", "").strip()
+        if proxy_url:
+            opts["proxy"] = proxy_url
         
     return opts
 
