@@ -196,6 +196,12 @@ def _build_ydl_opts() -> dict:
         opts["cookiefile"] = COOKIE_FILE
     elif COOKIE_BROWSER:
         opts["cookiesfrombrowser"] = (COOKIE_BROWSER,)
+        
+    # Check if a PROXY_URL environment variable is set (used to bypass IP blocking)
+    proxy_url = os.environ.get("PROXY_URL", "").strip()
+    if proxy_url:
+        opts["proxy"] = proxy_url
+        
     return opts
 
 def _build_info_opts() -> dict:
