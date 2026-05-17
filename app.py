@@ -170,7 +170,7 @@ class InfoRequest(BaseModel):
 
 # ── yt-dlp sync helpers (run in thread pool, never in the event loop) ─────────
 
-def _build_ydl_opts() -> dict:
+def _build_ydl_opts(url: str = "") -> dict:
     """Base yt-dlp options shared by all calls."""
     opts: dict = {
         "quiet":             True,
@@ -192,10 +192,17 @@ def _build_ydl_opts() -> dict:
             ),
         },
     }
-    if COOKIE_FILE and os.path.exists(COOKIE_FILE):
-        opts["cookiefile"] = COOKIE_FILE
-    elif COOKIE_BROWSER:
-        opts["cookiesfrombrowser"] = (COOKIE_BROWSER,)
+
+    # IMPORTANT: YouTube blocks accounts if the IP changes drastically (e.g., India -> LA proxy).
+    # For YouTube, it's safer to download anonymously for public videos.
+    # We only apply the cookies if the domain is NOT YouTube.
+    is_youtube = "youtube.com" in url.lower() or "youtu.be" in url.lower()
+    
+    if not is_youtube:
+        if COOKIE_FILE and os.path.exists(COOKIE_FILE):
+            opts["cookiefile"] = COOKIE_FILE
+        elif COOKIE_BROWSER:
+            opts["cookiesfrombrowser"] = (COOKIE_BROWSER,)
         
     # Check if a PROXY_URL environment variable is set (used to bypass IP blocking)
     proxy_url = os.environ.get("PROXY_URL", "").strip()
@@ -204,12 +211,12 @@ def _build_ydl_opts() -> dict:
         
     return opts
 
-def _build_info_opts() -> dict:
+def _build_info_opts(url: str = "") -> dict:
     """
     yt-dlp options for metadata-only fetches (no download).
     Strips format/merge keys that are only relevant during actual downloads.
     """
-    opts = _build_ydl_opts()
+    opts = _build_ydl_opts(url)
     opts.pop("format", None)
     opts.pop("merge_output_format", None)
     return opts
@@ -276,7 +283,7 @@ def _sync_fetch_info(url: str) -> dict:
     Always call via asyncio.to_thread() — never directly from async code.
     """
     # Info-only fetch — use lightweight opts (no format/merge keys)
-    with yt_dlp.YoutubeDL(_build_info_opts()) as ydl:
+    with yt_dlp.YoutubeDL(_build_info_opts(url)) as ydl:
         info = ydl.extract_info(url, download=False)
 
     info = _unwrap_info(info)
@@ -347,7 +354,7 @@ def _sync_download(url: str, task_id: str) -> None:
     Always call via asyncio.to_thread() — never directly from async code.
     """
     try:
-        opts = _build_ydl_opts()
+        opts = _build_ydl_opts(url)
 
         if FFMPEG_AVAILABLE:
             # ffmpeg found — download best video+audio separately and merge to MP4
