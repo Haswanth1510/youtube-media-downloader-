@@ -274,25 +274,37 @@ def _fmt_size(b: float | None) -> str | None:
         b /= 1024
     return f"{b:.1f} TB"
 
+def _extract_youtube_id(url: str) -> str | None:
+    """Robust helper to extract the 11-character video ID from any YouTube URL format."""
+    import re
+    url = url.strip()
+    
+    # Check if the input is a raw 11-char ID
+    if len(url) == 11 and re.match(r"^[a-zA-Z0-9_-]{11}$", url):
+        return url
+        
+    patterns = [
+        r"(?:v=|\/v\/|embed\/|shorts\/|youtu\.be\/|\/embed\/|\/v\/|watch\?v=|\?v=)([a-zA-Z0-9_-]{11})",
+        r"youtube\.com\/live\/([a-zA-Z0-9_-]{11})"
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+            
+    return None
+
 def _sync_fetch_info(url: str) -> dict:
     """
     Blocking: fetch video metadata without downloading.
     Always call via asyncio.to_thread() — never directly from async code.
     """
-    is_youtube = "youtube.com" in url.lower() or "youtu.be" in url.lower()
+    yt_id = _extract_youtube_id(url)
     rapidapi_key = os.environ.get("RAPIDAPI_KEY", "").strip()
 
-    if is_youtube and rapidapi_key:
-        import re
+    if yt_id and rapidapi_key:
         import requests
         try:
-            yt_id_match = re.search(
-                r'(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})',
-                url
-            )
-            if not yt_id_match:
-                raise Exception("Could not parse YouTube video ID from URL")
-            yt_id = yt_id_match.group(1)
 
             api_url = "https://ytstream-download-youtube-videos.p.rapidapi.com/dl"
             headers = {
@@ -400,20 +412,12 @@ def _sync_download(url: str, task_id: str) -> None:
     Blocking: download media to TEMP_DIR using the given task_id as prefix.
     Always call via asyncio.to_thread() — never directly from async code.
     """
-    is_youtube = "youtube.com" in url.lower() or "youtu.be" in url.lower()
+    yt_id = _extract_youtube_id(url)
     rapidapi_key = os.environ.get("RAPIDAPI_KEY", "").strip()
 
-    if is_youtube and rapidapi_key:
-        import re
+    if yt_id and rapidapi_key:
         import requests
         try:
-            yt_id_match = re.search(
-                r'(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})',
-                url
-            )
-            if not yt_id_match:
-                raise Exception("Could not parse YouTube video ID from URL")
-            yt_id = yt_id_match.group(1)
 
             _progress_store[task_id]["status"] = "downloading"
             _progress_store[task_id]["percent"] = 5.0
