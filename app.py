@@ -304,13 +304,23 @@ def _sync_fetch_info(url: str) -> dict:
             res.raise_for_status()
             data = res.json()
 
-            if data.get("status") != "ok" and "title" not in data:
+            if data.get("status") != "OK" and "title" not in data:
                 raise Exception(data.get("msg", "Failed to retrieve details from API"))
+
+            # Extract best thumbnail
+            thumb_list = data.get("thumbnail", [])
+            thumb = thumb_list[-1].get("url", "") if thumb_list else ""
+
+            # Convert duration from seconds to string
+            length_sec = int(data.get("lengthSeconds", 0))
+            m, s = divmod(length_sec, 60)
+            h, m = divmod(m, 60)
+            duration = f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
 
             return {
                 "title": data.get("title", "YouTube Video"),
-                "thumbnail": data.get("thumb", ""),
-                "duration": data.get("length", ""),
+                "thumbnail": thumb,
+                "duration": duration,
                 "filesize": None,
                 "ext": "mp4",
                 "platform": "YouTube",
@@ -417,48 +427,123 @@ def _sync_download(url: str, task_id: str) -> None:
             res.raise_for_status()
             data = res.json()
 
-            if data.get("status") != "ok" and "link" not in data:
-                raise Exception(data.get("msg", "Failed to retrieve download link from API"))
-
-            links = data.get("link", {})
-            best_url = None
-            
-            # The YouTube Download API format has a 'link' dict mapping quality strings to URLs
-            # Try to grab the best available MP4 format (e.g. 720p or 360p)
-            for q in ["720p", "360p", "1080p", "480p", "240p", "144p"]:
-                if q in links:
-                    best_url = links[q]
-                    # Sometimes it might be a list or a string. Standard is string.
-                    if isinstance(best_url, list) and len(best_url) > 0:
-                        best_url = best_url[0]
-                    if best_url:
-                        break
-
-            if not best_url:
-                raise Exception("Could not find a valid MP4 download link in the API response")
+            if data.get("status") != "OK" and "formats" not in data:
+                raise Exception(data.get("msg", "Failed to retrieve download formats from API"))
 
             title = data.get("title", f"YouTube_{yt_id}")
             safe_title = re.sub(r'[\/\\:*?"<>|]', '', title).strip() or f"YouTube_{yt_id}"
             final_filename = f"{safe_title}.mp4"
             actual_path = os.path.join(TEMP_DIR, f"{task_id}.mp4")
 
-            logger.info("RapidAPI matched stream URL: %s. Downloading to: %s", best_url[:50], actual_path)
-            
-            # Stream the file down and update our progress percentage
-            dl_res = requests.get(best_url, stream=True, timeout=30)
-            dl_res.raise_for_status()
-            total_size = int(dl_res.headers.get('content-length', 0))
+            # Look for best pre-merged formats (like itag 22 = 720p, or itag 18 = 360p)
+            formats = data.get("formats", [])
+            best_premerged = None
+            for itag_target in [22, 18]:
+                matches = [f for f in formats if f.get("itag") == itag_target]
+                if matches and matches[0].get("url"):
+                    best_premerged = matches[0]
+                    break
 
-            downloaded = 0
-            with open(actual_path, "wb") as f:
-                for chunk in dl_res.iter_content(chunk_size=65536):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if total_size > 0:
-                            percent = (downloaded / total_size) * 100
-                            # Throttle updates slightly to not block the thread
-                            _progress_store[task_id]["percent"] = round(percent, 1)
+            # Check if high-quality merging is possible
+            adaptive = data.get("adaptiveFormats", [])
+            best_video = None
+            best_audio = None
+
+            if FFMPEG_AVAILABLE:
+                import subprocess
+                # Extract and sort MP4 video streams by height descending
+                video_formats = [f for f in adaptive if f.get("mimeType", "").startswith("video/mp4")]
+                def get_height(f):
+                    q = f.get("qualityLabel", "")
+                    h_match = re.search(r"(\d+)", q)
+                    return int(h_match.group(1)) if h_match else 0
+                video_formats.sort(key=get_height, reverse=True)
+                
+                # Keep video formats <= 1080p to save server bandwidth
+                video_formats = [f for f in video_formats if get_height(f) <= 1080]
+                best_video = video_formats[0] if video_formats else None
+
+                # Extract and sort MP4 audio streams by bitrate descending
+                audio_formats = [f for f in adaptive if f.get("mimeType", "").startswith("audio/mp4")]
+                audio_formats.sort(key=lambda f: int(f.get("bitrate", 0)), reverse=True)
+                best_audio = audio_formats[0] if audio_formats else None
+
+            if FFMPEG_AVAILABLE and best_video and best_audio and get_height(best_video) > 360:
+                # Download split video/audio streams and merge them using ffmpeg
+                video_path = os.path.join(TEMP_DIR, f"{task_id}_video.mp4")
+                audio_path = os.path.join(TEMP_DIR, f"{task_id}_audio.m4a")
+
+                # 1. Download Video (0% - 70%)
+                logger.info("Downloading split 1080p/720p video stream from RapidAPI")
+                _progress_store[task_id]["status"] = "downloading"
+                res_v = requests.get(best_video["url"], stream=True, timeout=30)
+                res_v.raise_for_status()
+                v_total = int(res_v.headers.get('content-length', 0))
+                v_downloaded = 0
+                with open(video_path, "wb") as f:
+                    for chunk in res_v.iter_content(chunk_size=65536):
+                        if chunk:
+                            f.write(chunk)
+                            v_downloaded += len(chunk)
+                            if v_total > 0:
+                                percent = (v_downloaded / v_total) * 70
+                                _progress_store[task_id]["percent"] = round(percent, 1)
+
+                # 2. Download Audio (70% - 90%)
+                logger.info("Downloading split audio stream from RapidAPI")
+                res_a = requests.get(best_audio["url"], stream=True, timeout=30)
+                res_a.raise_for_status()
+                a_total = int(res_a.headers.get('content-length', 0))
+                a_downloaded = 0
+                with open(audio_path, "wb") as f:
+                    for chunk in res_a.iter_content(chunk_size=65536):
+                        if chunk:
+                            f.write(chunk)
+                            a_downloaded += len(chunk)
+                            if a_total > 0:
+                                percent = 70 + (a_downloaded / a_total) * 20
+                                _progress_store[task_id]["percent"] = round(percent, 1)
+
+                # 3. Merge Streams (90% - 95%)
+                logger.info("Merging split streams using ffmpeg")
+                _progress_store[task_id]["status"] = "processing"
+                _progress_store[task_id]["percent"] = 90.0
+                cmd = [FFMPEG_PATH or "ffmpeg", "-y", "-i", video_path, "-i", audio_path, "-c", "copy", actual_path]
+                subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+
+                # Clean up temporary split files
+                try:
+                    os.remove(video_path)
+                    os.remove(audio_path)
+                except Exception:
+                    pass
+            else:
+                # Fallback to downloading a pre-merged format (e.g. 720p/360p direct MP4)
+                url_to_download = None
+                if best_premerged:
+                    url_to_download = best_premerged.get("url")
+                elif formats:
+                    url_to_download = formats[0].get("url")
+                elif adaptive:
+                    url_to_download = adaptive[0].get("url")
+
+                if not url_to_download:
+                    raise Exception("Could not find any valid download links in the API response")
+
+                logger.info("Downloading pre-merged direct stream from RapidAPI")
+                _progress_store[task_id]["status"] = "downloading"
+                res_dl = requests.get(url_to_download, stream=True, timeout=30)
+                res_dl.raise_for_status()
+                total_size = int(res_dl.headers.get('content-length', 0))
+                downloaded = 0
+                with open(actual_path, "wb") as f:
+                    for chunk in res_dl.iter_content(chunk_size=65536):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total_size > 0:
+                                percent = (downloaded / total_size) * 95
+                                _progress_store[task_id]["percent"] = round(percent, 1)
 
             _progress_store[task_id]["status"] = "finished"
             _progress_store[task_id]["percent"] = 100.0
