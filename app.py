@@ -668,6 +668,56 @@ async def cookie_status():
     })
 
 
+@app.get("/api/rapidapi-status")
+async def rapidapi_status():
+    """Debug endpoint: tests the RapidAPI integration and outputs full diagnostic data."""
+    import requests
+    rapidapi_key = os.environ.get("RAPIDAPI_KEY", "").strip()
+    key_set = bool(rapidapi_key)
+    key_len = len(rapidapi_key)
+    key_obfuscated = ""
+    if key_set:
+        key_obfuscated = f"{rapidapi_key[:4]}...{rapidapi_key[-4:]}" if key_len > 8 else "****"
+
+    api_url = "https://ytstream-download-youtube-videos.p.rapidapi.com/dl"
+    headers = {
+        "x-rapidapi-key": rapidapi_key,
+        "x-rapidapi-host": "ytstream-download-youtube-videos.p.rapidapi.com"
+    }
+
+    test_id = "UxxajLWwzqY"
+    status_code = None
+    response_text = None
+    exception_str = None
+    success = False
+
+    try:
+        if not key_set:
+            raise Exception("RAPIDAPI_KEY environment variable is missing or empty")
+            
+        res = requests.get(api_url, headers=headers, params={"id": test_id}, timeout=10)
+        status_code = res.status_code
+        response_text = res.text[:500]
+        res.raise_for_status()
+        data = res.json()
+        if data.get("status") == "OK":
+            success = True
+        else:
+            exception_str = f"API returned status: {data.get('status')}. Msg: {data.get('msg')}"
+    except Exception as e:
+        exception_str = str(e)
+
+    return JSONResponse({
+        "RAPIDAPI_KEY_env_set": key_set,
+        "RAPIDAPI_KEY_length": key_len,
+        "RAPIDAPI_KEY_obfuscated": key_obfuscated,
+        "test_connection_success": success,
+        "test_status_code": status_code,
+        "test_response_prefix": response_text,
+        "test_exception": exception_str
+    })
+
+
 @app.post("/api/info")
 async def get_info(req: InfoRequest, request: Request):
     """
