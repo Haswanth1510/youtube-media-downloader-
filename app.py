@@ -1,5 +1,6 @@
 import os
 import base64
+import shutil
 import uuid
 import glob
 import asyncio
@@ -19,8 +20,10 @@ import yt_dlp
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 if os.name == 'nt':  # Windows
     FFMPEG_PATH = os.path.join(BASE_DIR, "ffmpeg.exe")
+    FFMPEG_AVAILABLE = os.path.exists(FFMPEG_PATH)
 else:
-    FFMPEG_PATH = "ffmpeg"  # Linux / Render (assumes installed in PATH)
+    FFMPEG_PATH = shutil.which("ffmpeg") or "ffmpeg"
+    FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None
 TEMP_DIR    = os.path.join(BASE_DIR, "downloads")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
@@ -334,12 +337,18 @@ def _sync_download(url: str, task_id: str) -> None:
     """
     try:
         opts = _build_ydl_opts()
-        
-        # Force yt-dlp to select MP4-compatible video and M4A audio. 
-        # Cap at 1080p to prevent extremely slow 4K downloads from stalling the server.
-        opts["format"]               = "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best"
-        opts["merge_output_format"]  = "mp4"
-        opts["outtmpl"]              = os.path.join(TEMP_DIR, f"{task_id}.%(ext)s")
+
+        if FFMPEG_AVAILABLE:
+            # ffmpeg found — download best video+audio separately and merge to MP4
+            opts["format"]              = "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]"
+            opts["merge_output_format"] = "mp4"
+            logger.info("ffmpeg available — using merge format")
+        else:
+            # ffmpeg NOT found — download a pre-merged stream only (no merging needed)
+            opts["format"] = "best[height<=1080][ext=mp4]/best[height<=1080]/best"
+            logger.warning("ffmpeg NOT found — using pre-merged format (lower quality possible)")
+
+        opts["outtmpl"] = os.path.join(TEMP_DIR, f"{task_id}.%(ext)s")
         
         # Attach the progress hook
         opts["progress_hooks"] = [lambda d: _progress_hook(d, task_id)]
