@@ -1,5 +1,5 @@
 fastapi>=0.104.1
 uvicorn>=0.23.2
-yt-dlp>=2023.10.13
+yt-dlp>=2026.03.17
 instaloader>=4.10.1
 pydantic>=2.4.2
