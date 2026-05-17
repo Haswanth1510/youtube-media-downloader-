@@ -24,3 +24,7 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Browser cookies — sensitive, never commit
+cookies.txt
+*.cookies.txt

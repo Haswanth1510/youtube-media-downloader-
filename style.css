@@ -247,41 +247,7 @@ h1 em {
 
 .paste-btn:hover { color: var(--ink); }
 
-/* quality */
-.quality-wrap {
-  overflow: hidden;
-  max-height: 0;
-  opacity: 0;
-  transition: max-height .3s ease, opacity .25s ease;
-}
 
-.quality-wrap.open {
-  max-height: 90px;
-  opacity: 1;
-  margin-bottom: 36px;
-}
-
-.quality-select {
-  width: 100%;
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid var(--line);
-  color: var(--ink);
-  font-family: var(--sans);
-  font-size: .95rem;
-  font-weight: 300;
-  padding: 10px 0;
-  outline: none;
-  cursor: pointer;
-  appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%239A9791' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 0 center;
-  background-size: 12px;
-  transition: border-color .2s;
-}
-
-.quality-select:focus { border-color: var(--ink); }
 
 /* ── DOWNLOAD BTN ── */
 .dl-btn {
@@ -436,12 +402,25 @@ h1 em {
   cursor: pointer;
   transition: all .2s ease;
   align-self: flex-start;
-  display: block;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .save-btn:hover {
   background: var(--ink);
   color: var(--bg);
+}
+
+.save-btn.loading {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.save-btn.loading .dl-spin {
+  display: block;
+  border-color: rgba(26, 26, 24, 0.15);
+  border-top-color: var(--ink);
 }
 
 /* ── FOOTER ── */
@@ -499,3 +478,40 @@ nav        { animation: fadeIn .4s .0s  both; }
 .left      { animation: fadeIn .45s .08s both; }
 .right     { animation: fadeIn .45s .16s both; }
 footer     { animation: fadeIn .4s .22s both; }
+
+/* ── PROGRESS BAR ── */
+.progress-container {
+  display: none;
+  margin-top: 16px;
+  margin-bottom: 24px;
+  width: 100%;
+}
+
+.progress-container.show {
+  display: block;
+  animation: fadeIn 0.3s ease;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--ink);
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-family: var(--sans);
+  text-align: right;
+}
+
