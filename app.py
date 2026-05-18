@@ -194,17 +194,14 @@ def _build_ydl_opts(url: str = "") -> dict:
         },
     }
 
-    is_youtube = "youtube.com" in url.lower() or "youtu.be" in url.lower()
-    
     # Always apply cookies if they exist
     if COOKIE_FILE and os.path.exists(COOKIE_FILE):
         opts["cookiefile"] = COOKIE_FILE
     elif COOKIE_BROWSER:
         opts["cookiesfrombrowser"] = (COOKIE_BROWSER,)
         
-    # We skip the Webshare proxy for YouTube because their datacenter IPs are hard-banned
     proxy_url = os.environ.get("PROXY_URL", "").strip()
-    if proxy_url and not is_youtube:
+    if proxy_url:
         opts["proxy"] = proxy_url
         
     return opts
@@ -228,10 +225,10 @@ def _friendly_error(exc: Exception) -> str:
     low = msg.lower()
 
     if any(k in low for k in ("login", "log in", "sign in", "authentication", "not logged")):
-        if "youtube" in low or "bot" in low or "confirm you're not a bot" in low:
+        if "bot" in low or "confirm you're not a bot" in low:
             return (
-                "YouTube requires you to sign in to confirm you're not a bot. "
-                "Update your cookies.txt with a fresh YouTube session, or ensure "
+                "The platform requires you to sign in to confirm you're not a bot. "
+                "Update your cookies.txt with a fresh session, or ensure "
                 "your proxy is working correctly."
             )
         return (
@@ -252,7 +249,7 @@ def _friendly_error(exc: Exception) -> str:
     if any(k in low for k in ("unavailable", "not available", "been removed")):
         return "This content is unavailable or has been removed."
     if "unsupported url" in low:
-        return "This URL is not supported. Please paste a valid Instagram or YouTube link."
+        return "This URL is not supported. Please paste a valid Instagram link."
     # Return the original yt-dlp message as a fallback
     return msg
 
@@ -275,72 +272,13 @@ def _fmt_size(b: float | None) -> str | None:
         b /= 1024
     return f"{b:.1f} TB"
 
-def _extract_youtube_id(url: str) -> str | None:
-    """Robust helper to extract the 11-character video ID from any YouTube URL format."""
-    import re
-    url = url.strip()
-    
-    # Check if the input is a raw 11-char ID
-    if len(url) == 11 and re.match(r"^[a-zA-Z0-9_-]{11}$", url):
-        return url
-        
-    patterns = [
-        r"(?:v=|\/v\/|embed\/|shorts\/|youtu\.be\/|\/embed\/|\/v\/|watch\?v=|\?v=)([a-zA-Z0-9_-]{11})",
-        r"youtube\.com\/live\/([a-zA-Z0-9_-]{11})"
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, url)
-        if match:
-            return match.group(1)
-            
-    return None
-
 def _sync_fetch_info(url: str) -> dict:
     """
     Blocking: fetch video metadata without downloading.
     Always call via asyncio.to_thread() — never directly from async code.
     """
-    yt_id = _extract_youtube_id(url)
-    rapidapi_key = os.environ.get("RAPIDAPI_KEY", "").strip()
-
-    if yt_id and rapidapi_key:
-        import requests
-        try:
-
-            api_url = "https://ytstream-download-youtube-videos.p.rapidapi.com/dl"
-            headers = {
-                "x-rapidapi-key": rapidapi_key,
-                "x-rapidapi-host": "ytstream-download-youtube-videos.p.rapidapi.com"
-            }
-            logger.info("Fetching YouTube info from RapidAPI for ID: %s", yt_id)
-            res = requests.get(api_url, headers=headers, params={"id": yt_id}, timeout=15)
-            res.raise_for_status()
-            data = res.json()
-
-            if data.get("status") != "OK" and "title" not in data:
-                raise Exception(data.get("msg", "Failed to retrieve details from API"))
-
-            # Extract best thumbnail
-            thumb_list = data.get("thumbnail", [])
-            thumb = thumb_list[-1].get("url", "") if thumb_list else ""
-
-            # Convert duration from seconds to string
-            length_sec = int(data.get("lengthSeconds", 0))
-            m, s = divmod(length_sec, 60)
-            h, m = divmod(m, 60)
-            duration = f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
-
-            return {
-                "title": data.get("title", "YouTube Video"),
-                "thumbnail": thumb,
-                "duration": duration or "N/A",
-                "platform": "YouTube",
-                "extractor": "youtube",
-                "filesize": "N/A",
-                "ext": "MP4",
-            }
-        except Exception as e:
-            logger.error("RapidAPI Info Fetch Failed, trying yt-dlp fallback: %s", e)
+    if "youtube.com" in url.lower() or "youtu.be" in url.lower():
+        raise ValueError("YouTube downloads are not supported.")
 
     # Info-only fetch — use lightweight opts (no format/merge keys)
     with yt_dlp.YoutubeDL(_build_info_opts(url)) as ydl:
@@ -358,7 +296,6 @@ def _sync_fetch_info(url: str) -> dict:
 
     extractor = info.get("extractor", "unknown").lower()
     platform  = (
-        "YouTube"   if "youtube"   in extractor else
         "Instagram" if "instagram" in extractor else
         extractor.capitalize()
     )
@@ -413,152 +350,8 @@ def _sync_download(url: str, task_id: str) -> None:
     Blocking: download media to TEMP_DIR using the given task_id as prefix.
     Always call via asyncio.to_thread() — never directly from async code.
     """
-    yt_id = _extract_youtube_id(url)
-    rapidapi_key = os.environ.get("RAPIDAPI_KEY", "").strip()
-
-    if yt_id and rapidapi_key:
-        import requests
-        try:
-
-            _progress_store[task_id]["status"] = "downloading"
-            _progress_store[task_id]["percent"] = 5.0
-
-            api_url = "https://ytstream-download-youtube-videos.p.rapidapi.com/dl"
-            headers = {
-                "x-rapidapi-key": rapidapi_key,
-                "x-rapidapi-host": "ytstream-download-youtube-videos.p.rapidapi.com"
-            }
-            logger.info("Requesting YouTube download from RapidAPI for ID: %s", yt_id)
-            res = requests.get(api_url, headers=headers, params={"id": yt_id}, timeout=15)
-            res.raise_for_status()
-            data = res.json()
-
-            if data.get("status") != "OK" and "formats" not in data:
-                raise Exception(data.get("msg", "Failed to retrieve download formats from API"))
-
-            title = data.get("title", f"YouTube_{yt_id}")
-            safe_title = re.sub(r'[\/\\:*?"<>|]', '', title).strip() or f"YouTube_{yt_id}"
-            final_filename = f"{safe_title}.mp4"
-            actual_path = os.path.join(TEMP_DIR, f"{task_id}.mp4")
-
-            # Look for best pre-merged formats (like itag 22 = 720p, or itag 18 = 360p)
-            formats = data.get("formats", [])
-            best_premerged = None
-            for itag_target in [22, 18]:
-                matches = [f for f in formats if f.get("itag") == itag_target]
-                if matches and matches[0].get("url"):
-                    best_premerged = matches[0]
-                    break
-
-            # Check if high-quality merging is possible
-            adaptive = data.get("adaptiveFormats", [])
-            best_video = None
-            best_audio = None
-
-            if FFMPEG_AVAILABLE:
-                import subprocess
-                # Extract and sort MP4 video streams by height descending
-                video_formats = [f for f in adaptive if f.get("mimeType", "").startswith("video/mp4")]
-                def get_height(f):
-                    q = f.get("qualityLabel", "")
-                    h_match = re.search(r"(\d+)", q)
-                    return int(h_match.group(1)) if h_match else 0
-                video_formats.sort(key=get_height, reverse=True)
-                
-                # Keep video formats <= 1080p to save server bandwidth
-                video_formats = [f for f in video_formats if get_height(f) <= 1080]
-                best_video = video_formats[0] if video_formats else None
-
-                # Extract and sort MP4 audio streams by bitrate descending
-                audio_formats = [f for f in adaptive if f.get("mimeType", "").startswith("audio/mp4")]
-                audio_formats.sort(key=lambda f: int(f.get("bitrate", 0)), reverse=True)
-                best_audio = audio_formats[0] if audio_formats else None
-
-            if FFMPEG_AVAILABLE and best_video and best_audio and get_height(best_video) > 360:
-                # Download split video/audio streams and merge them using ffmpeg
-                video_path = os.path.join(TEMP_DIR, f"{task_id}_video.mp4")
-                audio_path = os.path.join(TEMP_DIR, f"{task_id}_audio.m4a")
-
-                # 1. Download Video (0% - 70%)
-                logger.info("Downloading split 1080p/720p video stream from RapidAPI")
-                _progress_store[task_id]["status"] = "downloading"
-                res_v = requests.get(best_video["url"], stream=True, timeout=30)
-                res_v.raise_for_status()
-                v_total = int(res_v.headers.get('content-length', 0))
-                v_downloaded = 0
-                with open(video_path, "wb") as f:
-                    for chunk in res_v.iter_content(chunk_size=65536):
-                        if chunk:
-                            f.write(chunk)
-                            v_downloaded += len(chunk)
-                            if v_total > 0:
-                                percent = (v_downloaded / v_total) * 70
-                                _progress_store[task_id]["percent"] = round(percent, 1)
-
-                # 2. Download Audio (70% - 90%)
-                logger.info("Downloading split audio stream from RapidAPI")
-                res_a = requests.get(best_audio["url"], stream=True, timeout=30)
-                res_a.raise_for_status()
-                a_total = int(res_a.headers.get('content-length', 0))
-                a_downloaded = 0
-                with open(audio_path, "wb") as f:
-                    for chunk in res_a.iter_content(chunk_size=65536):
-                        if chunk:
-                            f.write(chunk)
-                            a_downloaded += len(chunk)
-                            if a_total > 0:
-                                percent = 70 + (a_downloaded / a_total) * 20
-                                _progress_store[task_id]["percent"] = round(percent, 1)
-
-                # 3. Merge Streams (90% - 95%)
-                logger.info("Merging split streams using ffmpeg")
-                _progress_store[task_id]["status"] = "processing"
-                _progress_store[task_id]["percent"] = 90.0
-                cmd = [FFMPEG_PATH or "ffmpeg", "-y", "-i", video_path, "-i", audio_path, "-c", "copy", actual_path]
-                subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-
-                # Clean up temporary split files
-                try:
-                    os.remove(video_path)
-                    os.remove(audio_path)
-                except Exception:
-                    pass
-            else:
-                # Fallback to downloading a pre-merged format (e.g. 720p/360p direct MP4)
-                url_to_download = None
-                if best_premerged:
-                    url_to_download = best_premerged.get("url")
-                elif formats:
-                    url_to_download = formats[0].get("url")
-                elif adaptive:
-                    url_to_download = adaptive[0].get("url")
-
-                if not url_to_download:
-                    raise Exception("Could not find any valid download links in the API response")
-
-                logger.info("Downloading pre-merged direct stream from RapidAPI")
-                _progress_store[task_id]["status"] = "downloading"
-                res_dl = requests.get(url_to_download, stream=True, timeout=30)
-                res_dl.raise_for_status()
-                total_size = int(res_dl.headers.get('content-length', 0))
-                downloaded = 0
-                with open(actual_path, "wb") as f:
-                    for chunk in res_dl.iter_content(chunk_size=65536):
-                        if chunk:
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            if total_size > 0:
-                                percent = (downloaded / total_size) * 95
-                                _progress_store[task_id]["percent"] = round(percent, 1)
-
-            _progress_store[task_id]["status"] = "finished"
-            _progress_store[task_id]["percent"] = 100.0
-            _progress_store[task_id]["download_name"] = final_filename
-            _progress_store[task_id]["actual_path"] = actual_path
-            logger.info("RapidAPI YouTube download finished successfully!")
-            return
-        except Exception as e:
-            logger.error("RapidAPI download failed: %s. Falling back to yt-dlp.", e)
+    if "youtube.com" in url.lower() or "youtu.be" in url.lower():
+        raise ValueError("YouTube downloads are not supported.")
 
     try:
         opts = _build_ydl_opts(url)
@@ -668,54 +461,7 @@ async def cookie_status():
     })
 
 
-@app.get("/api/rapidapi-status")
-async def rapidapi_status():
-    """Debug endpoint: tests the RapidAPI integration and outputs full diagnostic data."""
-    import requests
-    rapidapi_key = os.environ.get("RAPIDAPI_KEY", "").strip()
-    key_set = bool(rapidapi_key)
-    key_len = len(rapidapi_key)
-    key_obfuscated = ""
-    if key_set:
-        key_obfuscated = f"{rapidapi_key[:4]}...{rapidapi_key[-4:]}" if key_len > 8 else "****"
 
-    api_url = "https://ytstream-download-youtube-videos.p.rapidapi.com/dl"
-    headers = {
-        "x-rapidapi-key": rapidapi_key,
-        "x-rapidapi-host": "ytstream-download-youtube-videos.p.rapidapi.com"
-    }
-
-    test_id = "UxxajLWwzqY"
-    status_code = None
-    response_text = None
-    exception_str = None
-    success = False
-
-    try:
-        if not key_set:
-            raise Exception("RAPIDAPI_KEY environment variable is missing or empty")
-            
-        res = requests.get(api_url, headers=headers, params={"id": test_id}, timeout=10)
-        status_code = res.status_code
-        response_text = res.text[:500]
-        res.raise_for_status()
-        data = res.json()
-        if data.get("status") == "OK":
-            success = True
-        else:
-            exception_str = f"API returned status: {data.get('status')}. Msg: {data.get('msg')}"
-    except Exception as e:
-        exception_str = str(e)
-
-    return JSONResponse({
-        "RAPIDAPI_KEY_env_set": key_set,
-        "RAPIDAPI_KEY_length": key_len,
-        "RAPIDAPI_KEY_obfuscated": key_obfuscated,
-        "test_connection_success": success,
-        "test_status_code": status_code,
-        "test_response_prefix": response_text,
-        "test_exception": exception_str
-    })
 
 
 @app.post("/api/info")

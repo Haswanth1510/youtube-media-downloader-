@@ -1,7 +1,6 @@
 const TABS = {
   'ig-post':  { ph: 'https://www.instagram.com/p/…' },
   'ig-story': { ph: 'https://www.instagram.com/stories/…' },
-  'youtube':  { ph: 'https://www.youtube.com/watch?v=…' },
 };
 
 let active = 'ig-post';
@@ -50,9 +49,7 @@ pasteBtn.addEventListener('click', async () => {
 function autoDetectPlatform(url) {
   if (!url) return;
   url = url.toLowerCase();
-  if (url.includes('youtube.com') || url.includes('youtu.be')) {
-    setTab('youtube');
-  } else if (url.includes('instagram.com/stories')) {
+  if (url.includes('instagram.com/stories')) {
     setTab('ig-story');
   } else if (url.includes('instagram.com/p') || url.includes('instagram.com/reel')) {
     setTab('ig-post');

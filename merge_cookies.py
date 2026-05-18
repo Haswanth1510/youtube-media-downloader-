@@ -13,17 +13,13 @@ for l in lines:
                 seen.add(name)
                 ig_lines.append(l.rstrip() + '\n')
 
-# Read YouTube cookies from existing cookies.txt
-yt_lines = [l for l in open('cookies.txt', encoding='utf-8').readlines() if '.youtube.com' in l]
-
 # Build merged cookies.txt
 header = '# Netscape HTTP Cookie File\n# This file is generated for yt-dlp.  Do not edit.\n\n'
-combined = header + ''.join(yt_lines) + ''.join(ig_lines)
+combined = header + ''.join(ig_lines)
 
 with open('cookies.txt', 'w', encoding='utf-8') as f:
     f.write(combined)
 
-print(f'YouTube cookies: {len(yt_lines)}')
 print(f'Instagram cookies: {len(ig_lines)}')
 print('Instagram cookie names:', [l.strip().split('\t')[5] for l in ig_lines])
 
