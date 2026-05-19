@@ -19,9 +19,11 @@ import yt_dlp
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
-if os.name == 'nt':  # Windows
-    FFMPEG_PATH = os.path.join(BASE_DIR, "ffmpeg.exe")
-    FFMPEG_AVAILABLE = os.path.exists(FFMPEG_PATH)
+# Check local directory first, then global system PATH
+_local_ffmpeg = os.path.join(BASE_DIR, "ffmpeg.exe" if os.name == 'nt' else "ffmpeg")
+if os.path.exists(_local_ffmpeg):
+    FFMPEG_PATH = _local_ffmpeg
+    FFMPEG_AVAILABLE = True
 else:
     FFMPEG_PATH = shutil.which("ffmpeg") or "ffmpeg"
     FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None
@@ -143,7 +145,7 @@ async def lifespan(app: FastAPI):
     # Start the periodic cleanup background task
     cleanup_task = asyncio.create_task(_periodic_cleanup())
     logger.info(
-        "Media Downloader ready — max %d concurrent downloads, "
+        "YouTube Media Downloader (YTSave) ready — max %d concurrent downloads, "
         "rate limit %d req/%ds per IP",
         MAX_CONCURRENT_DOWNLOADS, RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW,
     )
@@ -156,7 +158,7 @@ async def lifespan(app: FastAPI):
         pass
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
-app = FastAPI(title="Media Downloader API", lifespan=lifespan)
+app = FastAPI(title="YouTube Media Downloader (YTSave) API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -168,6 +170,10 @@ app.add_middleware(
 # ── Pydantic models ───────────────────────────────────────────────────────────
 class InfoRequest(BaseModel):
     url: str
+
+class PrepareRequest(BaseModel):
+    url: str
+    format_id: str = "video-best"
 
 # ── yt-dlp sync helpers (run in thread pool, never in the event loop) ─────────
 
@@ -183,6 +189,15 @@ def _build_ydl_opts(url: str = "") -> dict:
         # Abort stalled/slow connections after 30 s so threads don't leak
         "socket_timeout":    30,
         "noplaylist": True,
+        # Download Speed Optimizations & Throttling Bypass
+        "concurrent_fragment_downloads": 10,
+        "buffersize": 1024 * 1024, # 1MB buffer size
+        "throttled_rate": "100K", # Re-extract if speed drops under 100KB/s
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web"],
+            }
+        },
         # Use a real Chrome User-Agent; some platforms (Instagram) reject
         # requests that look like bots or use the default yt-dlp UA.
         "http_headers": {
@@ -277,9 +292,6 @@ def _sync_fetch_info(url: str) -> dict:
     Blocking: fetch video metadata without downloading.
     Always call via asyncio.to_thread() — never directly from async code.
     """
-    if "youtube.com" in url.lower() or "youtu.be" in url.lower():
-        raise ValueError("YouTube downloads are not supported.")
-
     # Info-only fetch — use lightweight opts (no format/merge keys)
     with yt_dlp.YoutubeDL(_build_info_opts(url)) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -296,17 +308,48 @@ def _sync_fetch_info(url: str) -> dict:
 
     extractor = info.get("extractor", "unknown").lower()
     platform  = (
-        "Instagram" if "instagram" in extractor else
+        "YouTube" if "youtube" in extractor else
         extractor.capitalize()
     )
 
     # Best available filesize estimate from the formats list
     filesize: float | None = None
-    for fmt in reversed(info.get("formats", [])):
+    
+    # Extract available formats dynamically
+    video_resolutions = set()
+    has_audio = False
+    
+    for fmt in info.get("formats", []):
         fs = fmt.get("filesize") or fmt.get("filesize_approx")
         if fs:
             filesize = fs
-            break
+        # Check if format has video or audio
+        vcodec = fmt.get("vcodec", "none")
+        acodec = fmt.get("acodec", "none")
+        height = fmt.get("height")
+        
+        if vcodec != "none" and height:
+            video_resolutions.add(height)
+        if acodec != "none":
+            has_audio = True
+
+    offer_videos = []
+    # Check for standard resolutions (descending)
+    for h in [2160, 1440, 1080, 720, 480, 360]:
+        if h in video_resolutions:
+            offer_videos.append({"id": f"video-{h}", "label": f"{h}p (MP4)"})
+            
+    if not offer_videos:
+        offer_videos.append({"id": "video-best", "label": "Best Quality (MP4)"})
+
+    offer_audios = []
+    if has_audio:
+        offer_audios.extend([
+            {"id": "audio-mp3-320", "label": "MP3 (320kbps)"},
+            {"id": "audio-mp3-256", "label": "MP3 (256kbps)"},
+            {"id": "audio-mp3-128", "label": "MP3 (128kbps)"},
+            {"id": "audio-m4a", "label": "M4A (Native)"}
+        ])
 
     return {
         "title":     title,
@@ -315,7 +358,9 @@ def _sync_fetch_info(url: str) -> dict:
         "platform":  platform,
         "extractor": extractor,
         "filesize":  _fmt_size(filesize),
-        "ext":       info.get("ext", "unknown").upper(),
+        "ext":       "MP4",
+        "video_formats": offer_videos,
+        "audio_formats": offer_audios
     }
 
 # ── Global Progress Store ─────────────────────────────────────────────────────
@@ -345,26 +390,42 @@ def _progress_hook(d: dict, task_id: str) -> None:
         _progress_store[task_id]['percent'] = 100
         _progress_store[task_id]['status'] = 'processing'
 
-def _sync_download(url: str, task_id: str) -> None:
+def _sync_download(url: str, task_id: str, format_id: str = "video-best") -> None:
     """
     Blocking: download media to TEMP_DIR using the given task_id as prefix.
     Always call via asyncio.to_thread() — never directly from async code.
     """
-    if "youtube.com" in url.lower() or "youtu.be" in url.lower():
-        raise ValueError("YouTube downloads are not supported.")
-
     try:
         opts = _build_ydl_opts(url)
 
-        if FFMPEG_AVAILABLE:
-            # ffmpeg found — download best video+audio separately and merge to MP4
-            opts["format"]              = "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=1080]+bestaudio/best[height<=1080]"
-            opts["merge_output_format"] = "mp4"
-            logger.info("ffmpeg available — using merge format")
-        else:
-            # ffmpeg NOT found — download a pre-merged stream only (no merging needed)
-            opts["format"] = "best[height<=1080][ext=mp4]/best[height<=1080]/best"
-            logger.warning("ffmpeg NOT found — using pre-merged format (lower quality possible)")
+        # Configure download formats based on user selection
+        if format_id.startswith("video-"):
+            if format_id == "video-best":
+                base_fmt = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best"
+            else:
+                height = format_id.split("-")[1]
+                base_fmt = f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<={height}]+bestaudio/best[height<={height}]"
+            
+            if FFMPEG_AVAILABLE:
+                opts["format"] = base_fmt
+                opts["merge_output_format"] = "mp4"
+            else:
+                opts["format"] = "best[ext=mp4]/best"
+                
+        elif format_id.startswith("audio-"):
+            if format_id == "audio-m4a":
+                opts["format"] = "bestaudio[ext=m4a]/bestaudio"
+                if FFMPEG_AVAILABLE:
+                    opts["postprocessors"] = [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'm4a'}]
+            elif format_id.startswith("audio-mp3-"):
+                bitrate = format_id.split("-")[2]
+                opts["format"] = "bestaudio"
+                if FFMPEG_AVAILABLE:
+                    opts["postprocessors"] = [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'mp3',
+                        'preferredquality': bitrate,
+                    }]
 
         opts["outtmpl"] = os.path.join(TEMP_DIR, f"{task_id}.%(ext)s")
         
@@ -378,11 +439,18 @@ def _sync_download(url: str, task_id: str) -> None:
 
         # Locate the merged output file by UUID prefix.
         matches = glob.glob(os.path.join(TEMP_DIR, f"{task_id}*"))
-        if not matches:
+        # Exclude temporary or incomplete parts
+        completed_matches = [m for m in matches if not m.endswith((".part", ".temp", ".ytdl"))]
+        
+        if not completed_matches:
+            completed_matches = matches # Fallback to any matching file if none found
+            
+        if not completed_matches:
             raise FileNotFoundError("Downloaded file not found on disk")
+            
         # Prefer files with an extension over the raw task_id (if both exist)
-        matches.sort(key=lambda x: len(x), reverse=True)
-        actual_path = matches[0]
+        completed_matches.sort(key=lambda x: len(x), reverse=True)
+        actual_path = completed_matches[0]
 
         # Build a safe filename for the Content-Disposition header
         _, ext = os.path.splitext(actual_path)
@@ -390,9 +458,9 @@ def _sync_download(url: str, task_id: str) -> None:
             ext = ".mp4"  # Default to mp4 if no extension found
             
         raw_title  = info.get("title", "download")
-        safe_title = "".join(
-            c for c in raw_title if c.isalnum() or c in (" ", ".", "-", "_")
-        ).strip()
+        
+        # Support full Unicode filenames while removing OS-illegal characters
+        safe_title = re.sub(r'[\\/*?:"<>|]', '_', raw_title).strip(' .')
         
         # yt-dlp sometimes falls back to the filename (task_id) if it can't find a title
         if not safe_title or task_id in safe_title:
@@ -480,7 +548,7 @@ async def get_info(req: InfoRequest, request: Request):
         raise HTTPException(status_code=400, detail=_friendly_error(exc))
 
 @app.post("/api/prepare")
-async def prepare_download(req: InfoRequest, request: Request, background_tasks: BackgroundTasks):
+async def prepare_download(req: PrepareRequest, request: Request, background_tasks: BackgroundTasks):
     """
     Starts an asynchronous download task and returns a task_id for progress polling.
     """
@@ -500,7 +568,7 @@ async def prepare_download(req: InfoRequest, request: Request, background_tasks:
     # Run the download in a background task
     async def _run_download_task():
         async with download_semaphore:
-            await asyncio.to_thread(_sync_download, req.url, task_id)
+            await asyncio.to_thread(_sync_download, req.url, task_id, req.format_id)
 
     background_tasks.add_task(_run_download_task)
     return JSONResponse({"task_id": task_id})
@@ -537,23 +605,36 @@ async def download_media(task_id: str):
     if task_info["status"] != "completed":
         raise HTTPException(status_code=400, detail="Download is not completed yet")
         
-    actual_path = task_info["actual_path"]
-    download_name = task_info["download_name"]
-
-    # Create a universally safe ASCII fallback name
-    ascii_name = "".join(c for c in download_name if ord(c) < 128)
-    if not ascii_name or ascii_name.startswith('.'):
-        ascii_name = "download" + (os.path.splitext(download_name)[1] or ".mp4")
+    actual_path = task_info.get("actual_path")
+    download_name = task_info.get("download_name")
+    
+    if not actual_path or not download_name:
+        raise HTTPException(status_code=500, detail="Download metadata is corrupted or missing")
         
-    quoted_name = urllib.parse.quote(download_name)
-    
+    if not os.path.exists(actual_path):
+        raise HTTPException(status_code=404, detail="File not found on server")
+
+    # Serve the file directly using a manual, highly compatible RFC 5987 header setup
+    # In Content-Disposition, the standard 'filename' parameter must contain only ASCII characters.
+    # We strip any non-ASCII characters to prevent UnicodeEncodeError in Starlette/FastAPI.
+    # The 'filename*' parameter handles the full UTF-8 encoded name safely.
+    _, ext = os.path.splitext(download_name)
+    ascii_download_name = download_name.encode("ascii", errors="ignore").decode("ascii")
+    if not ascii_download_name.strip() or ascii_download_name == ext:
+        ascii_download_name = f"download{ext}"
+
+    safe_download_name = urllib.parse.quote(download_name)
     headers = {
-        "Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=utf-8''{quoted_name}"
+        "Content-Disposition": f'attachment; filename="{ascii_download_name}"; filename*=utf-8\'\'{safe_download_name}',
+        "Access-Control-Expose-Headers": "Content-Disposition"
     }
-    
-    # Note: We rely on the periodic cleanup task to delete the file
-    # instead of a background_task, to avoid PermissionError on Windows.
-    return FileResponse(path=actual_path, headers=headers)
+
+    return FileResponse(
+        path=actual_path, 
+        media_type="application/octet-stream",
+        headers=headers,
+        content_disposition_type=None
+    )
 
 # ── Static files ──────────────────────────────────────────────────────────────
 # Use BASE_DIR so the app works regardless of the working directory it's launched from

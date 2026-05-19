@@ -1,31 +1,44 @@
+/* ── YTSave · script.js ──────────────────────────────────────────────────── */
+
 const TABS = {
-  'ig-post':  { ph: 'https://www.instagram.com/p/…' },
-  'ig-story': { ph: 'https://www.instagram.com/stories/…' },
+  'yt-video': { ph: 'https://www.youtube.com/watch?v=…' },
+  'yt-audio': { ph: 'https://www.youtube.com/watch?v=…' },
 };
 
-let active = 'ig-post';
-let currentUrlToDownload = '';
+let active = 'yt-video';
+let currentUrl = '';
+let selectedFormatId = '';
+let pollInterval = null;
+const API_BASE = window.location.protocol === 'file:' ? 'http://localhost:8000' : '';
 
+
+/* DOM refs */
 const $ = id => document.getElementById(id);
 const urlInput     = $('urlInput');
 const pasteBtn     = $('pasteBtn');
 const dlBtn        = $('dlBtn');
+const btnLabel     = $('btnLabel');
 const errBox       = $('errBox');
 const resultCard   = $('resultCard');
 const rThumb       = $('rThumb');
 const rTitle       = $('rTitle');
-const rChip        = $('rChip');
 const rPlatform    = $('rPlatform');
 const rSize        = $('rSize');
 const rDur         = $('rDur');
+const qualityWrap  = $('qualityWrap');
+const qualityGrid  = $('qualityGrid');
+const progressWrap = $('progressWrap');
+const progressFill = $('progressFill');
+const progressText = $('progressText');
 const saveBtn      = $('saveBtn');
 
+/* ── Tab switching ─────────────────────────────────────────────────────────── */
 function setTab(tabId) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   const btn = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
   if (btn) btn.classList.add('active');
   active = tabId;
-  urlInput.placeholder = TABS[active].ph;
+  urlInput.placeholder = TABS[active]?.ph || '';
   clearErr();
   resultCard.classList.remove('show');
 }
@@ -37,77 +50,70 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
+/* ── Paste ─────────────────────────────────────────────────────────────────── */
 pasteBtn.addEventListener('click', async () => {
   try {
     const text = await navigator.clipboard.readText();
     urlInput.value = text;
-    autoDetectPlatform(text);
+    autoDetect(text);
     clearErr();
-  } catch { showErr('Clipboard access denied — please paste manually.'); }
+  } catch {
+    showErr('Clipboard access denied — please paste manually.');
+  }
 });
 
-function autoDetectPlatform(url) {
+function autoDetect(url) {
   if (!url) return;
   url = url.toLowerCase();
-  if (url.includes('instagram.com/stories')) {
-    setTab('ig-story');
-  } else if (url.includes('instagram.com/p') || url.includes('instagram.com/reel')) {
-    setTab('ig-post');
+  if (url.includes('youtube.com') || url.includes('youtu.be')) {
+    setTab('yt-video');
   }
 }
 
-urlInput.addEventListener('input', (e) => {
+urlInput.addEventListener('input', e => {
   clearErr();
-  autoDetectPlatform(e.target.value);
+  autoDetect(e.target.value);
 });
 
+/* ── Fetch info ────────────────────────────────────────────────────────────── */
 dlBtn.addEventListener('click', async () => {
   let url = urlInput.value.trim();
-  if (!url) { showErr('Please enter a URL.'); return; }
-  
-  // Auto-prepend https:// if missing
+  if (!url) { showErr('Please enter a YouTube URL.'); return; }
+
   if (!/^https?:\/\//i.test(url)) {
     url = 'https://' + url;
-    urlInput.value = url; // Update input field to show the full URL
+    urlInput.value = url;
   }
 
-  // Validate structure first
   let parsed;
-  try { 
-    parsed = new URL(url); 
-  } catch { 
-    showErr('That doesn\'t look like a valid URL.'); 
-    return; 
-  }
-  
-  // Only allow http/https
+  try { parsed = new URL(url); }
+  catch { showErr("That doesn't look like a valid URL."); return; }
+
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     showErr('Only http:// and https:// links are supported.');
     return;
   }
-  
+
   clearErr();
   dlBtn.classList.add('loading');
   resultCard.classList.remove('show');
 
   try {
-    const res = await fetch('/api/info', {
+    const res = await fetch(`${API_BASE}/api/info`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url })
+      body: JSON.stringify({ url }),
     });
-    
+
     if (!res.ok) {
       let detail = 'Failed to fetch video info.';
-      try {
-        const errorData = await res.json();
-        detail = errorData.detail || detail;
-      } catch { /* response wasn't JSON (e.g. 500 HTML page) */ }
+      try { detail = (await res.json()).detail || detail; } catch {}
       throw new Error(detail);
     }
-    
+
     const data = await res.json();
-    showResult(data, url);
+    currentUrl = url;
+    showResult(data);
   } catch (err) {
     showErr(err.message);
   } finally {
@@ -115,121 +121,134 @@ dlBtn.addEventListener('click', async () => {
   }
 });
 
-let pollInterval = null;
-
-saveBtn.addEventListener('click', async () => {
-  if (!currentUrlToDownload) return;
-
-  const url = currentUrlToDownload;
-  
-  saveBtn.style.display = 'none';
-  $('progressContainer').classList.add('show');
-  $('progressFill').style.width = '0%';
-  $('progressText').textContent = 'Preparing...';
-
-  try {
-    const res = await fetch('/api/prepare', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url })
-    });
-
-    if (!res.ok) {
-      let detail = 'Failed to prepare download.';
-      try {
-        const errorData = await res.json();
-        detail = errorData.detail || detail;
-      } catch { }
-      throw new Error(detail);
-    }
-
-    const { task_id } = await res.json();
-    
-    pollInterval = setInterval(async () => {
-      try {
-        const progRes = await fetch(`/api/progress?task_id=${task_id}`);
-        if (!progRes.ok) {
-           const errData = await progRes.json();
-           throw new Error(errData.detail || 'Failed to get progress');
-        }
-        const progData = await progRes.json();
-        
-        if (progData.status === 'error') {
-           throw new Error('Download failed on server.');
-        }
-
-        if (progData.status === 'starting') {
-           $('progressText').textContent = 'Starting download...';
-        } else if (progData.status === 'downloading') {
-           const p = progData.percent || 0;
-           $('progressFill').style.width = `${p}%`;
-           $('progressText').textContent = `Downloading... ${p}%`;
-        } else if (progData.status === 'processing') {
-           $('progressFill').style.width = `100%`;
-           $('progressText').textContent = 'Processing (merging audio/video)...';
-        } else if (progData.status === 'completed') {
-           clearInterval(pollInterval);
-           $('progressFill').style.width = `100%`;
-           $('progressText').textContent = 'Completed! Saving to device...';
-           
-           window.location.assign(`/api/download?task_id=${task_id}`);
-           
-           setTimeout(() => {
-             $('progressContainer').classList.remove('show');
-             saveBtn.style.display = 'inline-flex';
-           }, 3000);
-        }
-        
-      } catch (e) {
-        clearInterval(pollInterval);
-        showErr(e.message);
-        $('progressContainer').classList.remove('show');
-        saveBtn.style.display = 'inline-flex';
-      }
-    }, 1000);
-
-  } catch (err) {
-    showErr(err.message);
-    $('progressContainer').classList.remove('show');
-    saveBtn.style.display = 'inline-flex';
-  }
-});
-
-function showResult(data, url) {
-  currentUrlToDownload = url;
-
-  rThumb.src = data.thumbnail || 'https://via.placeholder.com/800x450?text=No+Thumbnail';
-  rTitle.textContent = data.title;
-  
-  // Use the actual extension (e.g. JPG for images, MP4 for video)
-  let ext = data.ext || 'MP4';
-  if (ext === 'UNKNOWN') ext = 'MP4';
-  rChip.textContent = ext;
-  
-  rPlatform.textContent = data.platform;
+/* ── Show result ───────────────────────────────────────────────────────────── */
+function showResult(data) {
+  rThumb.src = data.thumbnail || '';
+  rTitle.textContent = data.title || '—';
+  rPlatform.textContent = data.platform || 'YouTube';
+  rDur.textContent = data.duration || '—';
   rSize.textContent = data.filesize || '—';
-  rDur.textContent = data.duration;
-  
-  saveBtn.style.display = 'inline-flex';
-  $('progressContainer').classList.remove('show');
-  
+
+  /* Build quality buttons */
+  qualityGrid.innerHTML = '';
+  selectedFormatId = '';
+
+  const formats = active === 'yt-audio'
+    ? (data.audio_formats || [])
+    : (data.video_formats || []);
+
+  if (formats.length > 0) {
+    formats.forEach((f, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'quality-btn' + (i === 0 ? ' selected' : '');
+      btn.textContent = f.label;
+      btn.dataset.id = f.id;
+      if (i === 0) selectedFormatId = f.id;
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.quality-btn').forEach(b => b.classList.remove('selected'));
+        btn.classList.add('selected');
+        selectedFormatId = f.id;
+      });
+      qualityGrid.appendChild(btn);
+    });
+    qualityWrap.style.display = 'flex';
+  } else {
+    selectedFormatId = active === 'yt-audio' ? 'audio-mp3-320' : 'video-best';
+    qualityWrap.style.display = 'none';
+  }
+
+  progressWrap.classList.remove('show');
+  saveBtn.classList.remove('hidden');
   resultCard.classList.add('show');
   resultCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-const COOKIE_HINT =
-  'Tip: Export your Instagram cookies using the ' +
-  '<a href="https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenk" ' +
-  'target="_blank" style="color:inherit;text-decoration:underline">Get cookies.txt LOCALLY</a> ' +
-  'Chrome extension while logged in, then save the file as <b>cookies.txt</b> in the app folder.';
+/* ── Save / download ───────────────────────────────────────────────────────── */
+saveBtn.addEventListener('click', async () => {
+  if (!currentUrl) return;
 
+  const format_id = selectedFormatId || (active === 'yt-audio' ? 'audio-mp3-320' : 'video-best');
+
+  saveBtn.classList.add('hidden');
+  progressWrap.classList.add('show');
+  progressFill.style.width = '0%';
+  progressText.textContent = 'Preparing…';
+
+  try {
+    const res = await fetch(`${API_BASE}/api/prepare`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: currentUrl, format_id }),
+    });
+
+    if (!res.ok) {
+      let detail = 'Failed to start download.';
+      try { detail = (await res.json()).detail || detail; } catch {}
+      throw new Error(detail);
+    }
+
+    const { task_id } = await res.json();
+
+    if (pollInterval) clearInterval(pollInterval);
+
+    pollInterval = setInterval(async () => {
+      try {
+        const progRes = await fetch(`${API_BASE}/api/progress?task_id=${task_id}`);
+        if (!progRes.ok) {
+          const errData = await progRes.json();
+          throw new Error(errData.detail || 'Progress check failed');
+        }
+        const prog = await progRes.json();
+
+        if (prog.status === 'starting') {
+          progressText.textContent = 'Starting download…';
+          progressFill.style.width = '5%';
+        } else if (prog.status === 'downloading') {
+          const p = prog.percent || 0;
+          progressFill.style.width = `${p}%`;
+          progressText.textContent = `Downloading… ${p}%`;
+        } else if (prog.status === 'processing') {
+          progressFill.style.width = '100%';
+          progressText.textContent = 'Merging audio & video…';
+        } else if (prog.status === 'completed') {
+          clearInterval(pollInterval);
+          progressFill.style.width = '100%';
+          progressText.textContent = 'Done! Saving to device…';
+          
+          // Programmatic a-download trigger for perfect filename handling
+          const a = document.createElement('a');
+          a.href = `${API_BASE}/api/download?task_id=${task_id}`;
+          a.download = rTitle.textContent ? rTitle.textContent.trim() : 'download.mp4';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+
+          setTimeout(() => {
+            progressWrap.classList.remove('show');
+            saveBtn.classList.remove('hidden');
+          }, 3500);
+        }
+      } catch (e) {
+        clearInterval(pollInterval);
+        progressWrap.classList.remove('show');
+        saveBtn.classList.remove('hidden');
+        showErr(e.message);
+      }
+    }, 1000);
+
+  } catch (err) {
+    progressWrap.classList.remove('show');
+    saveBtn.classList.remove('hidden');
+    showErr(err.message);
+  }
+});
+
+/* ── Helpers ───────────────────────────────────────────────────────────────── */
 function showErr(msg) {
   errBox.innerHTML = msg;
-  // Append cookie hint for Instagram auth failures
-  const low = msg.toLowerCase();
-  if (low.includes('cookie') || low.includes('login') || low.includes('empty response') || low.includes('log in')) {
-    errBox.innerHTML += '<br><small style="opacity:.8">' + COOKIE_HINT + '</small>';
-  }
   errBox.classList.add('show');
 }
-function clearErr() { errBox.classList.remove('show'); errBox.innerHTML = ''; }
+function clearErr() {
+  errBox.classList.remove('show');
+  errBox.innerHTML = '';
+}
