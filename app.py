@@ -145,7 +145,7 @@ async def lifespan(app: FastAPI):
     # Start the periodic cleanup background task
     cleanup_task = asyncio.create_task(_periodic_cleanup())
     logger.info(
-        "YouTube Media Downloader (YTSave) ready — max %d concurrent downloads, "
+        "YouTube Media Downloader (UNOS) ready — max %d concurrent downloads, "
         "rate limit %d req/%ds per IP",
         MAX_CONCURRENT_DOWNLOADS, RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW,
     )
@@ -158,7 +158,7 @@ async def lifespan(app: FastAPI):
         pass
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
-app = FastAPI(title="YouTube Media Downloader (YTSave) API", lifespan=lifespan)
+app = FastAPI(title="YouTube Media Downloader (UNOS) API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
